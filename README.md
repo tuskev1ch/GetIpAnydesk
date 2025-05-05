@@ -11,11 +11,11 @@
 Клонируйте репозиторий:
 
 ```bash
-git clone https://github.com/tuskev1ch/GetIpByAnydesk
+git clone https://github.com/tuskev1ch/GetIpAnydesk
 ```
 Перейдите в директорию проекта:
 ```bash
-cd GetIpByAnydesk
+cd GetIpAnydesk
 ```
 Установите необходимые зависимости:
 ```bash

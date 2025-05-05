@@ -31,7 +31,7 @@ def is_ip_in_logs(ip: str) -> bool:
     if not os.path.exists("safeipadress.log"):
         return False
     with open("safeipadress.log", "r", encoding='utf-8') as log_file:
-        return any(f"IP        : {ip}" in line for line in log_file)
+        return any(f"IP: {ip}" in line for line in log_file)
 
 def is_local_ip(ip: str) -> bool:
     return any(ip.startswith(network) for network in LOCAL_NETWORKS)

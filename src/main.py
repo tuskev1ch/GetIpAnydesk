@@ -95,7 +95,7 @@ def main():
                 console_logger.info(f"Found {len(connections)} external connection(s)")
                 for conn in connections:
                     if not is_ip_in_logs(conn['IP']):
-                        console_logger.info(f"New connection to: {conn['IP']}")
+                        console_logger.info(f"New connection to: {conn['IP']}:{conn['Port']}")
                         ip_info = get_ip_info(conn)
                         save_connection_info(ip_info)
                         console_logger.info("Details saved to log file")

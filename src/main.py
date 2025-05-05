@@ -1,12 +1,22 @@
 import os
 import sys
+import time
 import wmi
 import psutil
 import requests
 import logging
 from typing import List, Dict
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+file_logger = logging.getLogger('file_logger')
+file_logger.setLevel(logging.INFO)
+file_handler = logging.FileHandler("safeipadress.log", mode='a', encoding='utf-8')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+file_logger.addHandler(file_handler)
+
+console_logger = logging.getLogger('console_logger')
+console_logger.setLevel(logging.INFO)
+console_handler = logging.StreamHandler()
+console_logger.addHandler(console_handler)
 
 IGNORED_PORTS = {80, 443, 53, 21, 22, 25, 110, 143, 993, 995, 3306, 3389}
 
@@ -16,6 +26,12 @@ LOCAL_NETWORKS = {
     '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.',
     '127.0.0.1', '::1'
 }
+
+def is_ip_in_logs(ip: str) -> bool:
+    if not os.path.exists("safeipadress.log"):
+        return False
+    with open("safeipadress.log", "r", encoding='utf-8') as log_file:
+        return any(f"IP        : {ip}" in line for line in log_file)
 
 def is_local_ip(ip: str) -> bool:
     return any(ip.startswith(network) for network in LOCAL_NETWORKS)
@@ -27,80 +43,70 @@ def get_ips() -> List[Dict[str, str]]:
     for process in wmi_obj.Win32_Process():
         try:
             if 'anydesk' in process.Name.lower():
-                for conn in psutil.Process(process.ProcessId).connections():
-                    if conn.status in ('SYN_SENT', 'ESTABLISHED') and conn.raddr.ip:
-                        conn_ip = conn.raddr.ip
-                        conn_port = conn.raddr.port
-
-                        if (conn_port not in IGNORED_PORTS and 
-                            not is_local_ip(conn_ip)):
-                            if not any(c['IP'] == conn_ip and c['Port'] == conn_port for c in connections):
-                                connections.append({
-                                    "IP": conn_ip,
-                                    "Port": str(conn_port)
-                                })
+                for conn in psutil.Process(process.ProcessId).net_connections():
+                    if conn.status in ('SYN_SENT', 'ESTABLISHED') and conn.raddr:
+                        ip, port = conn.raddr.ip, conn.raddr.port
+                        if port not in IGNORED_PORTS and not is_local_ip(ip):
+                            if not any(c['IP'] == ip for c in connections):
+                                connections.append({"IP": ip, "Port": str(port)})
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
-
     return connections
 
-def get_ip_info(conn_data: Dict[str, str]) -> Dict[str, str]:
-    conn_ip = conn_data['IP']
+def get_ip_info(ip_data: Dict[str, str]) -> Dict[str, str]:
+    ip = ip_data['IP']
     try:
-        response = requests.get(f'http://ip-api.com/json/{conn_ip}', timeout=5)
-        response.raise_for_status() 
+        response = requests.get(f'http://ip-api.com/json/{ip}', timeout=5)
+        response.raise_for_status()
         data = response.json()
         return {
-            "IP": conn_ip,
-            "Port": conn_data['Port'],
+            "IP": ip,
+            "Port": ip_data['Port'],
             "Country": data.get('country', 'Unknown'),
             "Region": data.get('regionName', 'Unknown'),
             "City": data.get('city', 'Unknown'),
             "ISP": data.get('isp', 'Unknown'),
             "AS": data.get('as', 'Unknown')
         }
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Failed to get IP info for {conn_ip}: {e}")
-        return {
-            "IP": conn_ip,
-            "Port": conn_data['Port'],
-            "Country": "Unknown",
-            "Region": "Unknown",
-            "City": "Unknown",
-            "ISP": "Unknown",
-            "AS": "Unknown"
-        }
+    except requests.exceptions.RequestException:
+        return {**ip_data,
+                "Country": "Unknown",
+                "Region": "Unknown",
+                "City": "Unknown",
+                "ISP": "Unknown",
+                "AS": "Unknown"}
 
-def try_exit() -> None:
-    logging.info("Exiting program...")
-    sys.exit(0)
+def save_connection_info(info: Dict[str, str]) -> None:
+    file_logger.info("="*40)
+    file_logger.info("Suspicious connection detected!")
+    file_logger.info("="*40)
+    for key, value in info.items():
+        file_logger.info(f'{key:<10}: {value}')
+    file_logger.info("="*40)
+    file_handler.flush()
 
-def main() -> None:
-    msg = 'Anydesk is turned off or no active external connections detected... [CTRL+C to exit]'
-
-    while True:
-        try:
+def main():
+    console_logger.info("Monitoring AnyDesk connections... [CTRL+C to exit]")
+    try:
+        while True:
             connections = get_ips()
-            logging.info(f"Scanning connections... Found {len(connections)} external connection(s).")
 
             if connections:
-                for conn_data in connections:
-                    logging.info("\n" + "="*40)
-                    logging.info("SUSPICIOUS CONNECTION DETECTED!")
-                    logging.info("="*40)
-                    infos = get_ip_info(conn_data)
-                    for key, value in infos.items():
-                        logging.info(f'{key:<10}: {value}')
-                    logging.info("="*40 + "\n")
+                console_logger.info(f"Found {len(connections)} external connection(s)")
+                for conn in connections:
+                    if not is_ip_in_logs(conn['IP']):
+                        console_logger.info(f"New connection to: {conn['IP']}")
+                        ip_info = get_ip_info(conn)
+                        save_connection_info(ip_info)
+                        console_logger.info("Details saved to log file")
             else:
-                logging.info(msg)
+                console_logger.info("No external connections detected")
 
-            import time
             time.sleep(5)
-                
-        except KeyboardInterrupt:
-            logging.info('Program finished, exiting...')
-            try_exit()
+
+    except KeyboardInterrupt:
+        console_logger.info("\nMonitoring stopped")
+        sys.exit(0)
 
 if __name__ == '__main__':
     main()
